@@ -1,0 +1,17 @@
+# Arduino build artifacts
+build/
+*.bin
+*.elf
+*.map
+
+# IDE files
+.vscode/
+*.code-workspace
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Captures à ajouter manuellement
+# captures/

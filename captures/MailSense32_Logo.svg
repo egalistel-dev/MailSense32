@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="300" height="180" viewBox="0 0 300 180" xmlns="http://www.w3.org/2000/svg">
+  <rect width="300" height="180" fill="#0d0f14" rx="16"/>
+  <!-- Enveloppe -->
+  <rect x="85" y="55" width="130" height="88" rx="6" fill="#161920" stroke="#f0a500" stroke-width="2.5"/>
+  <path d="M85 65 L150 105 L215 65" fill="none" stroke="#f0a500" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- WiFi -->
+  <circle cx="150" cy="38" r="5" fill="#f0a500"/>
+  <path d="M136 38 Q150 27 164 38" fill="none" stroke="#f0a500" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M125 38 Q150 19 175 38" fill="none" stroke="#e05c00" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+  <!-- Texte : Mail en orange, Sense en blanc, 32 en orange -->
+  <text x="150" y="163" text-anchor="middle" font-family="'Courier New',monospace" font-size="22" font-weight="700">
+    <tspan fill="#f0a500">Mail</tspan><tspan fill="#e8eaf0" opacity="0.85">Sense</tspan><tspan fill="#f0a500">32</tspan>
+  </text>
+</svg>
