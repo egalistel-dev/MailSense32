@@ -4,7 +4,7 @@
  * ╩ ╩╩ ╩╩╩═╝╚═╝╚═╝╝╚╝╚═╝╚═╝╚═╝ ╚═╝
  * 
  * MailSense32 — Smart Mailbox Detector
- * Version : 1.0.0
+ * Version : 1.0.1
  * Author  : Fab / egamaker.be
  * License : MIT
  * GitHub  : https://github.com/egamaker/MailSense32
@@ -40,7 +40,7 @@
 // ============================================================
 // CONSTANTS
 // ============================================================
-#define FIRMWARE_VERSION      "1.0.0"
+#define FIRMWARE_VERSION      "1.0.1"
 #define WIFI_MAX_RETRIES      5
 #define WIFI_TIMEOUT_MS       10000
 #define LONG_PRESS_MS         3000
@@ -170,6 +170,7 @@ void sendTelegram(bool isTest);
 String buildMessage(bool isTest);
 String getCurrentTime();
 void blinkLED(int times, int ms);
+void blinkRSSI(int rssi);
 void setupRoutes();
 String htmlWizard();
 String htmlSuccess();
@@ -314,12 +315,16 @@ void loop() {
 void goToSleep() {
   Serial.println("→ Deep sleep... waiting for sensor");
   digitalWrite(PIN_STATUS_LED, LOW);
+  
+  // 🔌 DÉCONNEXION PROPRE WIFI
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  
   // Wake on reed switch (GPIO4 HIGH) OR external button (GPIO12 LOW)
   esp_sleep_enable_ext0_wakeup(PIN_SENSOR, HIGH);
   esp_sleep_enable_ext1_wakeup(1ULL << PIN_EXT_BTN, ESP_EXT1_WAKEUP_ALL_LOW);
   esp_deep_sleep_start();
 }
-
 // ============================================================
 // NORMAL MODE — triggered by sensor
 // ============================================================
@@ -722,12 +727,32 @@ bool connectWiFi() {
   if (strlen(cfg.wifi_ssid) == 0) return false;
 
   Serial.printf("Connecting to %s ", cfg.wifi_ssid);
+  
+  // ⚡ OPTIMISATIONS WIFI
   WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);  // Puissance MAX (au lieu de 15 dBm par défaut)
+  WiFi.setSleep(false);                  // Désactive power save
+  WiFi.setAutoReconnect(true);           // Auto-reconnexion
+  WiFi.persistent(true);                 // Sauvegarde config
+  
   WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
 
   for (int i = 0; i < WIFI_MAX_RETRIES * 10; i++) {
     if (WiFi.status() == WL_CONNECTED) {
       Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
+      
+      // 📊 AFFICHE RSSI POUR DEBUG
+      int rssi = WiFi.RSSI();
+      Serial.printf("📶 WiFi RSSI: %d dBm ", rssi);
+      if (rssi > -50) Serial.println("(Excellent ✅)");
+      else if (rssi > -60) Serial.println("(Très bon ✅)");
+      else if (rssi > -70) Serial.println("(Bon ✅)");
+      else if (rssi > -80) Serial.println("(Faible ⚠️)");
+      else if (rssi > -90) Serial.println("(Très faible ⚠️)");
+      else Serial.println("(Critique ❌)");
+      
+      blinkRSSI(rssi);  // 💡 FEEDBACK LED SELON RSSI
+      
       return true;
     }
     delay(500);
@@ -735,6 +760,7 @@ bool connectWiFi() {
   }
 
   Serial.println("\nWiFi failed!");
+  blinkLED(10, 100);  // 10 blinks rapides = échec connexion
   return false;
 }
 
@@ -782,15 +808,16 @@ void sendNotification(bool isTest) {
 
 String buildMessage(bool isTest) {
   float bat = readBatteryPercent();
+  int rssi = WiFi.RSSI();  // 📶 AJOUT RSSI
   String time = getCurrentTime();
   String msg = isTest ? "[TEST] " : "";
   msg += String(cfg.custom_msg);
   msg += "\n🕐 " + time;
   msg += "\n" + getBatteryIcon(bat) + " Battery: " + String((int)bat) + "%";
   if (bat < BATTERY_LOW_PCT) msg += " ⚠️ Low battery!";
+  msg += "\n📶 WiFi: " + String(rssi) + " dBm";  // 📶 RSSI DANS NOTIFICATION
   return msg;
 }
-
 // ============================================================
 // EMAIL
 // ============================================================
@@ -859,11 +886,13 @@ void sendHAMQTT(bool isTest) {
   }
 
   float bat = readBatteryPercent();
+  int rssi = WiFi.RSSI();
   StaticJsonDocument<256> doc;
   doc["state"]    = "triggered";
   doc["message"]  = cfg.custom_msg;
   doc["time"]     = getCurrentTime();
   doc["battery"]  = (int)bat;
+  doc["rssi"]     = rssi;  // 📶 AJOUT RSSI DANS MQTT
   doc["test"]     = isTest;
 
   char payload[256];
@@ -906,7 +935,23 @@ void blinkLED(int times, int ms) {
     delay(ms);
   }
 }
-
+// 💡 LED BLINK CODE SELON RSSI
+void blinkRSSI(int rssi) {
+  // Blink pattern selon force signal
+  if (rssi > -60) {
+    // Excellent → 3 blinks rapides
+    blinkLED(3, 100);
+  } else if (rssi > -70) {
+    // Bon → 2 blinks moyens
+    blinkLED(2, 200);
+  } else if (rssi > -80) {
+    // Faible → 1 blink long
+    blinkLED(1, 500);
+  } else {
+    // Très faible → 5 blinks SOS rapides
+    blinkLED(5, 100);
+  }
+}
 // ============================================================
 // CONFIG — NVS
 // ============================================================
