@@ -300,7 +300,12 @@ Soumettez une **Pull Request** pour contribuer directement.
 | Résistances 100kΩ + 220kΩ | [AliExpress](https://s.click.aliexpress.com/e/_c3FcSUaL) *(affilié)* |
 | Bouton poussoir 6x6mm | [AliExpress](https://s.click.aliexpress.com/e/_c4tee6WF) *(affilié)* |
 | Connecteur JST 2 pins | [AliExpress](https://s.click.aliexpress.com/e/_c3EK7kmL) *(affilié)* |
+Si vous souhaitez réaliser ce projet facilement, le PCB est disponible avec les composants déjà soudés (PCBA) via JLCPCB. Grâce aux connecteurs femelles, aucune soudure complexe n'est requise pour les modules principaux : il suffit de les clipser !
 
+* 🛒 **Commander ici :** [MailSense32 sur OSHWLab](https://oshwlab.com/egalistel/project_wqdolgch)
+* 🎁 **Soutenir le projet :** Si vous êtes un nouvel utilisateur, [inscrivez-vous ici](https://jlcpcb.com/fr/?from=ESYQKQRKXDIVAAPFHSAC) pour soutenir mon travail et recevoir des coupons de réduction !
+
+---
 ---
 
 ### 📄 Licence
@@ -483,7 +488,10 @@ Hold **BOOT button** (GPIO0) for **3 seconds** after power-on.
 | Resistors 100kΩ + 220kΩ | [AliExpress](https://s.click.aliexpress.com/e/_c3FcSUaL) *(affiliate)* |
 | Push button 6x6mm | [AliExpress](https://s.click.aliexpress.com/e/_c4tee6WF) *(affiliate)* |
 | JST Connector 2 pins | [AliExpress](https://s.click.aliexpress.com/e/_c3EK7kmL) *(affiliate)* |
+If you want to build this project easily, the PCB is available with pre-assembled components (PCBA) via JLCPCB. Thanks to the female headers, no complex soldering is required for the main modules—just plug them in!
 
+* 🛒 **Order here:** [MailSense32 on OSHWLab](https://oshwlab.com/egalistel/project_wqdolgch)
+* 🎁 **Support the project:** If you are a new user, please [sign up here](https://jlcpcb.com/fr/?from=ESYQKQRKXDIVAAPFHSAC) to support my work and get discount coupons!
 ---
 
 ### 📄 License
