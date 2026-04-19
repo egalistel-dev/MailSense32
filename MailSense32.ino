@@ -5,7 +5,7 @@
  * 
  * MailSense32 — Smart Mailbox Detector
  * Version : 1.0.1
- * Author  : Fab / egamaker.be
+ * Author  : Egalistel / egamaker.be
  * License : MIT
  * GitHub  : https://github.com/egamaker/MailSense32
  * 
@@ -65,13 +65,13 @@
 #define BATTERY_FULL_PCT      95      // Notify when battery >= 95%
 
 // ============================================================
-// NOTIFICATION METHODS
+// NOTIFICATION METHODS (bitmask — combinable)
 // ============================================================
-#define NOTIF_NONE        0
-#define NOTIF_EMAIL       1
-#define NOTIF_NTFY        2
-#define NOTIF_HA_MQTT     3
-#define NOTIF_TELEGRAM    4
+#define NOTIF_NONE        0x00
+#define NOTIF_EMAIL       0x01
+#define NOTIF_NTFY        0x02
+#define NOTIF_HA_MQTT     0x04
+#define NOTIF_TELEGRAM    0x08
 
 // ============================================================
 // SENSOR TYPES
@@ -170,7 +170,6 @@ void sendTelegram(bool isTest);
 String buildMessage(bool isTest);
 String getCurrentTime();
 void blinkLED(int times, int ms);
-void blinkRSSI(int rssi);
 void setupRoutes();
 String htmlWizard();
 String htmlSuccess();
@@ -276,8 +275,20 @@ void setup() {
       goToSleep();
     }
   } else {
-    Serial.println("→ Normal boot, going to sleep");
-    goToSleep();
+    if (cfg.configured) {
+      Serial.println("→ Normal boot — starting status server");
+      if (connectWiFi()) {
+        configTime(0, 0, NTP_SERVER);
+        setenv("TZ", cfg.timezone, 1);
+        tzset();
+        startStatusServer();
+      } else {
+        startWizard(); // WiFi échoue → wizard pour reconfigurer
+      }
+    } else {
+      Serial.println("→ Not configured → wizard");
+      startWizard();
+    }
   }
 }
 
@@ -285,6 +296,42 @@ void loop() {
   server.handleClient();
 
   if (!serverStart) serverStart = millis();
+
+  // Real-time sensor monitoring — log GPIO4 state changes
+  static bool lastSensorState = LOW;
+  static unsigned long lastTriggerLoop = 0;
+  bool currentSensorState = digitalRead(PIN_SENSOR);
+  if (currentSensorState != lastSensorState) {
+    lastSensorState = currentSensorState;
+    Serial.printf("GPIO4 changed → %s\n", currentSensorState == HIGH ? "HIGH (magnet removed — mail!)" : "LOW (magnet present)");
+    // Si HIGH + détection active + pas en cooldown → envoyer notification
+    if (currentSensorState == HIGH && !maintenanceMode && (millis() - lastTriggerLoop > 10000)) {
+      lastTriggerLoop = millis();
+      Serial.println("→ Trigger detected while awake — sending notification");
+      sendNotification(false);
+    }
+  }
+
+  // Real-time external button monitoring — log GPIO12 state changes
+  static bool lastBtnState = HIGH;
+  static unsigned long btnPressStart = 0;
+  bool currentBtnState = digitalRead(PIN_EXT_BTN);
+  if (currentBtnState != lastBtnState) {
+    lastBtnState = currentBtnState;
+    if (currentBtnState == LOW) {
+      btnPressStart = millis();
+      Serial.println("GPIO12 → button pressed");
+    } else {
+      unsigned long pressDuration = millis() - btnPressStart;
+      Serial.printf("GPIO12 → button released after %lu ms\n", pressDuration);
+      if (pressDuration >= EXT_BTN_LONG_MS) {
+        Serial.println("→ Long press detected — charging mode activated");
+        chargingMode = true;
+      } else if (pressDuration >= EXT_BTN_SHORT_MS) {
+        Serial.println("→ Short press detected — status page already active");
+      }
+    }
+  }
 
   // Wizard timeout (AP mode)
   if (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA) {
@@ -315,16 +362,12 @@ void loop() {
 void goToSleep() {
   Serial.println("→ Deep sleep... waiting for sensor");
   digitalWrite(PIN_STATUS_LED, LOW);
-  
-  // 🔌 DÉCONNEXION PROPRE WIFI
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  
   // Wake on reed switch (GPIO4 HIGH) OR external button (GPIO12 LOW)
   esp_sleep_enable_ext0_wakeup(PIN_SENSOR, HIGH);
   esp_sleep_enable_ext1_wakeup(1ULL << PIN_EXT_BTN, ESP_EXT1_WAKEUP_ALL_LOW);
   esp_deep_sleep_start();
 }
+
 // ============================================================
 // NORMAL MODE — triggered by sensor
 // ============================================================
@@ -436,7 +479,11 @@ void startStatusServer() {
     cfg.sensor_type  = server.arg("sensor_type").toInt();
     cfg.language     = server.arg("language").toInt();
     cfg.cooldown_min = server.arg("cooldown_min").toInt();
-    cfg.notif_method = server.arg("notif_method").toInt();
+    cfg.notif_method = 0;
+    if (server.arg("notif_email")    == "1") cfg.notif_method |= NOTIF_EMAIL;
+    if (server.arg("notif_ntfy")     == "1") cfg.notif_method |= NOTIF_NTFY;
+    if (server.arg("notif_mqtt")     == "1") cfg.notif_method |= NOTIF_HA_MQTT;
+    if (server.arg("notif_telegram") == "1") cfg.notif_method |= NOTIF_TELEGRAM;
     strncpy(cfg.custom_msg,  server.arg("custom_msg").c_str(),  sizeof(cfg.custom_msg));
     strncpy(cfg.timezone,    server.arg("timezone").c_str(),    sizeof(cfg.timezone));
     strncpy(cfg.smtp_host,   server.arg("smtp_host").c_str(),   sizeof(cfg.smtp_host));
@@ -511,13 +558,14 @@ String htmlStatus() {
   int    rssi    = WiFi.RSSI();
   String batCol  = bat  > 50 ? "#30d68a" : bat  > 20 ? "#f0a500" : "#f04060";
   String rssiCol = rssi > -60 ? "#30d68a" : rssi > -75 ? "#f0a500" : "#f04060";
-  String notifName;
-  switch (cfg.notif_method) {
-    case 1: notifName = "📧 Email SMTP";     break;
-    case 2: notifName = "📣 Ntfy.sh";        break;
-    case 3: notifName = "🏠 Home Assistant"; break;
-    case 4: notifName = "✈️ Telegram";       break;
-    default: notifName = "⚠️ Non configuré"; break;
+  String notifName = "";
+  if (cfg.notif_method == NOTIF_NONE) { notifName = "⚠️ Non configuré"; }
+  else {
+    if (cfg.notif_method & NOTIF_EMAIL)    notifName += "📧 ";
+    if (cfg.notif_method & NOTIF_NTFY)     notifName += "📣 ";
+    if (cfg.notif_method & NOTIF_HA_MQTT)  notifName += "🏠 ";
+    if (cfg.notif_method & NOTIF_TELEGRAM) notifName += "✈️ ";
+    notifName.trim();
   }
   String sensorName = cfg.sensor_type == 0 ? "🧲 Reed Switch" : "👁️ PIR";
 
@@ -727,32 +775,12 @@ bool connectWiFi() {
   if (strlen(cfg.wifi_ssid) == 0) return false;
 
   Serial.printf("Connecting to %s ", cfg.wifi_ssid);
-  
-  // ⚡ OPTIMISATIONS WIFI
   WiFi.mode(WIFI_STA);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);  // Puissance MAX (au lieu de 15 dBm par défaut)
-  WiFi.setSleep(false);                  // Désactive power save
-  WiFi.setAutoReconnect(true);           // Auto-reconnexion
-  WiFi.persistent(true);                 // Sauvegarde config
-  
   WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
 
   for (int i = 0; i < WIFI_MAX_RETRIES * 10; i++) {
     if (WiFi.status() == WL_CONNECTED) {
       Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
-      
-      // 📊 AFFICHE RSSI POUR DEBUG
-      int rssi = WiFi.RSSI();
-      Serial.printf("📶 WiFi RSSI: %d dBm ", rssi);
-      if (rssi > -50) Serial.println("(Excellent ✅)");
-      else if (rssi > -60) Serial.println("(Très bon ✅)");
-      else if (rssi > -70) Serial.println("(Bon ✅)");
-      else if (rssi > -80) Serial.println("(Faible ⚠️)");
-      else if (rssi > -90) Serial.println("(Très faible ⚠️)");
-      else Serial.println("(Critique ❌)");
-      
-      blinkRSSI(rssi);  // 💡 FEEDBACK LED SELON RSSI
-      
       return true;
     }
     delay(500);
@@ -760,7 +788,6 @@ bool connectWiFi() {
   }
 
   Serial.println("\nWiFi failed!");
-  blinkLED(10, 100);  // 10 blinks rapides = échec connexion
   return false;
 }
 
@@ -769,7 +796,8 @@ bool connectWiFi() {
 // ============================================================
 float readBatteryPercent() {
   int raw = analogRead(PIN_BATTERY_ADC);
-  float voltage = raw * (3.3 / 4095.0) * ((BATTERY_R1 + BATTERY_R2) / BATTERY_R2);
+  float v_gpio = raw * (3.3 / 4095.0);
+  float voltage = v_gpio * ((BATTERY_R1 + BATTERY_R2) / BATTERY_R2);
   float pct = ((voltage - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V)) * 100.0;
   return constrain(pct, 0.0, 100.0);
 }
@@ -796,40 +824,45 @@ String getCurrentTime() {
 // NOTIFICATION DISPATCHER
 // ============================================================
 void sendNotification(bool isTest) {
-  switch (cfg.notif_method) {
-    case NOTIF_EMAIL:    sendEmail(isTest);    break;
-    case NOTIF_NTFY:     sendNtfy(isTest);     break;
-    case NOTIF_HA_MQTT:  sendHAMQTT(isTest);   break;
-    case NOTIF_TELEGRAM: sendTelegram(isTest);  break;
-    default:
-      Serial.println("No notification method configured");
+  if (cfg.notif_method == NOTIF_NONE) {
+    Serial.println("No notification method configured");
+    lastNotifOk = false;
+    return;
   }
+  lastNotifOk = true;
+  if (cfg.notif_method & NOTIF_EMAIL)    { Serial.println("→ Sending Email");    sendEmail(isTest);   }
+  if (cfg.notif_method & NOTIF_NTFY)     { Serial.println("→ Sending Ntfy");     sendNtfy(isTest);    }
+  if (cfg.notif_method & NOTIF_HA_MQTT)  { Serial.println("→ Sending HA MQTT");  sendHAMQTT(isTest);  }
+  if (cfg.notif_method & NOTIF_TELEGRAM) { Serial.println("→ Sending Telegram"); sendTelegram(isTest);}
 }
 
 String buildMessage(bool isTest) {
   float bat = readBatteryPercent();
-  int rssi = WiFi.RSSI();  // 📶 AJOUT RSSI
   String time = getCurrentTime();
   String msg = isTest ? "[TEST] " : "";
   msg += String(cfg.custom_msg);
   msg += "\n🕐 " + time;
   msg += "\n" + getBatteryIcon(bat) + " Battery: " + String((int)bat) + "%";
   if (bat < BATTERY_LOW_PCT) msg += " ⚠️ Low battery!";
-  msg += "\n📶 WiFi: " + String(rssi) + " dBm";  // 📶 RSSI DANS NOTIFICATION
   return msg;
 }
+
 // ============================================================
 // EMAIL
 // ============================================================
 void sendEmail(bool isTest) {
   Serial.println("→ Sending Email...");
   SMTPSession smtp;
+  smtp.debug(1);  // Debug SMTP dans le moniteur série
   ESP_Mail_Session session;
   session.server.host_name = cfg.smtp_host;
   session.server.port      = cfg.smtp_port;
   session.login.email      = cfg.smtp_user;
   session.login.password   = cfg.smtp_pass;
   session.login.user_domain = "";
+  session.time.ntp_server  = NTP_SERVER;
+  session.time.gmt_offset  = 1;
+  session.time.day_light_offset = 1;
 
   SMTP_Message message;
   message.sender.name  = "MailSense32";
@@ -886,13 +919,11 @@ void sendHAMQTT(bool isTest) {
   }
 
   float bat = readBatteryPercent();
-  int rssi = WiFi.RSSI();
   StaticJsonDocument<256> doc;
   doc["state"]    = "triggered";
   doc["message"]  = cfg.custom_msg;
   doc["time"]     = getCurrentTime();
   doc["battery"]  = (int)bat;
-  doc["rssi"]     = rssi;  // 📶 AJOUT RSSI DANS MQTT
   doc["test"]     = isTest;
 
   char payload[256];
@@ -935,23 +966,7 @@ void blinkLED(int times, int ms) {
     delay(ms);
   }
 }
-// 💡 LED BLINK CODE SELON RSSI
-void blinkRSSI(int rssi) {
-  // Blink pattern selon force signal
-  if (rssi > -60) {
-    // Excellent → 3 blinks rapides
-    blinkLED(3, 100);
-  } else if (rssi > -70) {
-    // Bon → 2 blinks moyens
-    blinkLED(2, 200);
-  } else if (rssi > -80) {
-    // Faible → 1 blink long
-    blinkLED(1, 500);
-  } else {
-    // Très faible → 5 blinks SOS rapides
-    blinkLED(5, 100);
-  }
-}
+
 // ============================================================
 // CONFIG — NVS
 // ============================================================
@@ -1068,7 +1083,11 @@ void setupRoutes() {
     cfg.sensor_type  = server.arg("sensor_type").toInt();
     cfg.language     = server.arg("language").toInt();
     cfg.cooldown_min = server.arg("cooldown_min").toInt();
-    cfg.notif_method = server.arg("notif_method").toInt();
+    cfg.notif_method = 0;
+    if (server.arg("notif_email")    == "1") cfg.notif_method |= NOTIF_EMAIL;
+    if (server.arg("notif_ntfy")     == "1") cfg.notif_method |= NOTIF_NTFY;
+    if (server.arg("notif_mqtt")     == "1") cfg.notif_method |= NOTIF_HA_MQTT;
+    if (server.arg("notif_telegram") == "1") cfg.notif_method |= NOTIF_TELEGRAM;
     strncpy(cfg.custom_msg, server.arg("custom_msg").c_str(), sizeof(cfg.custom_msg));
     strncpy(cfg.timezone,   server.arg("timezone").c_str(),   sizeof(cfg.timezone));
 
@@ -1296,8 +1315,8 @@ String htmlWizard() {
     background: rgba(240,165,0,0.08);
   }
 
-  .notif-panel { display: none; }
-  .notif-panel.active { display: block; }
+  .notif-panel { display: block; margin-top: 8px; }
+  .notif-panel[style*="display:none"] { display: none !important; }
 
   .btn {
     display: inline-flex;
@@ -1331,7 +1350,9 @@ String htmlWizard() {
 
   .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
 
-  .btn-test {
+.notif-check{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;border:1px solid var(--border);cursor:pointer;font-size:14px}
+.notif-check input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent);cursor:pointer;flex-shrink:0}
+.notif-check:has(input:checked){border-color:var(--accent);background:rgba(240,165,0,0.06)}
     background: rgba(48, 214, 138, 0.1);
     border: 1px solid var(--success);
     color: var(--success);
@@ -1523,27 +1544,38 @@ String htmlWizard() {
     <!-- NOTIFICATION METHOD -->
     <div class="card">
       <div class="card-title">🔔 Notification</div>
-      <label id="lbl-method">Méthode</label>
-      <select name="notif_method" id="notif_method" onchange="showNotifPanel(this.value)">
-        <option value="0" )rawhtml";
-  html += (cfg.notif_method == 0 ? "selected" : "");
-  html += R"rawhtml(>— Choisir / Choose —</option>
-        <option value="1" )rawhtml";
-  html += (cfg.notif_method == 1 ? "selected" : "");
-  html += R"rawhtml(>📧 Email SMTP</option>
-        <option value="2" )rawhtml";
-  html += (cfg.notif_method == 2 ? "selected" : "");
-  html += R"rawhtml(>📣 Ntfy.sh</option>
-        <option value="3" )rawhtml";
-  html += (cfg.notif_method == 3 ? "selected" : "");
-  html += R"rawhtml(>🏠 Home Assistant MQTT</option>
-        <option value="4" )rawhtml";
-  html += (cfg.notif_method == 4 ? "selected" : "");
-  html += R"rawhtml(>✈️ Telegram</option>
-      </select>
+      <label id="lbl-method">Méthodes (plusieurs choix possibles)</label>
+      <div style="display:flex;flex-direction:column;gap:10px;margin:10px 0">
+        <label class="notif-check">
+          <input type="checkbox" name="notif_email" value="1" id="chk-email" )rawhtml";
+  html += (cfg.notif_method & NOTIF_EMAIL ? "checked" : "");
+  html += R"rawhtml( onchange="togglePanel('panel-email',this.checked)">
+          <span>📧 Email SMTP</span>
+        </label>
+        <label class="notif-check">
+          <input type="checkbox" name="notif_ntfy" value="1" id="chk-ntfy" )rawhtml";
+  html += (cfg.notif_method & NOTIF_NTFY ? "checked" : "");
+  html += R"rawhtml( onchange="togglePanel('panel-ntfy',this.checked)">
+          <span>📣 Ntfy.sh</span>
+        </label>
+        <label class="notif-check">
+          <input type="checkbox" name="notif_mqtt" value="1" id="chk-mqtt" )rawhtml";
+  html += (cfg.notif_method & NOTIF_HA_MQTT ? "checked" : "");
+  html += R"rawhtml( onchange="togglePanel('panel-mqtt',this.checked)">
+          <span>🏠 Home Assistant MQTT</span>
+        </label>
+        <label class="notif-check">
+          <input type="checkbox" name="notif_telegram" value="1" id="chk-telegram" )rawhtml";
+  html += (cfg.notif_method & NOTIF_TELEGRAM ? "checked" : "");
+  html += R"rawhtml( onchange="togglePanel('panel-telegram',this.checked)">
+          <span>✈️ Telegram</span>
+        </label>
+      </div>
 
       <!-- EMAIL -->
-      <div id="panel-1" class="notif-panel">
+      <div id="panel-email" class="notif-panel" )rawhtml";
+  html += (cfg.notif_method & NOTIF_EMAIL ? "" : "style=\"display:none\"");
+  html += R"rawhtml(>
         <div class="row2" style="margin-top:16px">
           <div>
             <label id="lbl-smtp-host">Serveur SMTP</label>
@@ -1574,7 +1606,9 @@ String htmlWizard() {
       </div>
 
       <!-- NTFY -->
-      <div id="panel-2" class="notif-panel">
+      <div id="panel-ntfy" class="notif-panel" )rawhtml";
+  html += (cfg.notif_method & NOTIF_NTFY ? "" : "style=\"display:none\"");
+  html += R"rawhtml(>
         <label id="lbl-ntfy-server" style="margin-top:16px">Serveur Ntfy</label>
         <input type="text" name="ntfy_server" value=")rawhtml";
   html += String(cfg.ntfy_server);
@@ -1591,7 +1625,9 @@ String htmlWizard() {
       </div>
 
       <!-- MQTT HA -->
-      <div id="panel-3" class="notif-panel">
+      <div id="panel-mqtt" class="notif-panel" )rawhtml";
+  html += (cfg.notif_method & NOTIF_HA_MQTT ? "" : "style=\"display:none\"");
+  html += R"rawhtml(>
         <div class="row2" style="margin-top:16px">
           <div>
             <label id="lbl-mqtt-host">Broker MQTT</label>
@@ -1621,7 +1657,9 @@ String htmlWizard() {
       </div>
 
       <!-- TELEGRAM -->
-      <div id="panel-4" class="notif-panel">
+      <div id="panel-telegram" class="notif-panel" )rawhtml";
+  html += (cfg.notif_method & NOTIF_TELEGRAM ? "" : "style=\"display:none\"");
+  html += R"rawhtml(>
         <label id="lbl-tg-token" style="margin-top:16px">Bot Token</label>
         <input type="text" name="tg_token" value=")rawhtml";
   html += String(cfg.tg_token);
@@ -1662,7 +1700,7 @@ const t = {
     sensor:"Type de capteur", hint_sensor:"Reed Switch : plus fiable, zéro consommation au repos. PIR : détection sans contact physique, orientez-le vers l'intérieur de la boîte.",
     msg:"Message de notification", hint_msg:"Ce message sera envoyé avec l'heure et le niveau de batterie.",
     cooldown:"Délai anti-doublon (minutes)", hint_cooldown:"Délai minimum entre deux notifications. Défaut : 5 minutes.",
-    method:"Méthode de notification",
+    method:"Méthodes de notification (plusieurs choix possibles)",
     smtp_host:"Serveur SMTP", smtp_port:"Port", smtp_user:"Utilisateur", smtp_pass:"Mot de passe (App Password)", smtp_to:"Destinataire",
     ntfy_server:"Serveur Ntfy", ntfy_topic:"Topic (unique)", ntfy_token:"Token (optionnel, self-hosted)",
     mqtt_host:"Broker MQTT", mqtt_port:"Port", mqtt_user:"Utilisateur (optionnel)", mqtt_pass:"Mot de passe (optionnel)", mqtt_topic:"Topic MQTT",
@@ -1678,7 +1716,7 @@ const t = {
     sensor:"Sensor type", hint_sensor:"Reed Switch: more reliable, zero standby power. PIR: contactless detection, point it toward the inside of the mailbox.",
     msg:"Notification message", hint_msg:"This message will be sent with the time and battery level.",
     cooldown:"Anti-spam delay (minutes)", hint_cooldown:"Minimum delay between two notifications. Default: 5 minutes.",
-    method:"Notification method",
+    method:"Notification methods (multiple choices allowed)",
     smtp_host:"SMTP Server", smtp_port:"Port", smtp_user:"Username", smtp_pass:"Password (App Password)", smtp_to:"Recipient",
     ntfy_server:"Ntfy Server", ntfy_topic:"Topic (unique)", ntfy_token:"Token (optional, self-hosted)",
     mqtt_host:"MQTT Broker", mqtt_port:"Port", mqtt_user:"Username (optional)", mqtt_pass:"Password (optional)", mqtt_topic:"MQTT Topic",
@@ -1735,9 +1773,9 @@ function setLang(l) {
   }
 }
 
-function showNotifPanel(val) {
-  document.querySelectorAll('.notif-panel').forEach(p => p.classList.remove('active'));
-  if (val > 0) document.getElementById('panel-' + val).classList.add('active');
+function togglePanel(id, show) {
+  const panel = document.getElementById(id);
+  if (panel) panel.style.display = show ? 'block' : 'none';
 }
 
 function showToast(msg, type) {
@@ -1765,9 +1803,6 @@ async function reboot() {
 }
 
 // Init
-showNotifPanel()rawhtml";
-  html += String(cfg.notif_method);
-  html += R"rawhtml();
 setLang(lang);
 
 // Refresh battery every 30s
