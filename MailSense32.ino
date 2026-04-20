@@ -4,8 +4,8 @@
  * ╩ ╩╩ ╩╩╩═╝╚═╝╚═╝╝╚╝╚═╝╚═╝╚═╝ ╚═╝
  * 
  * MailSense32 — Smart Mailbox Detector
- * Version : 1.0.1
- * Author  : Egalistel / egamaker.be
+ * Version : 1.0.2
+ * Author  : Fab / egamaker.be
  * License : MIT
  * GitHub  : https://github.com/egamaker/MailSense32
  * 
@@ -40,7 +40,7 @@
 // ============================================================
 // CONSTANTS
 // ============================================================
-#define FIRMWARE_VERSION      "1.0.1"
+#define FIRMWARE_VERSION      "1.0.2"
 #define WIFI_MAX_RETRIES      5
 #define WIFI_TIMEOUT_MS       10000
 #define LONG_PRESS_MS         3000
@@ -362,9 +362,10 @@ void loop() {
 void goToSleep() {
   Serial.println("→ Deep sleep... waiting for sensor");
   digitalWrite(PIN_STATUS_LED, LOW);
-  // Wake on reed switch (GPIO4 HIGH) OR external button (GPIO12 LOW)
+  // Réveil uniquement sur Reed Switch GPIO4 HIGH (aimant retiré = courrier)
+  // Le bouton externe GPIO12 ne réveille pas en deep sleep
+  // (il sert uniquement quand l'ESP32 est déjà éveillé)
   esp_sleep_enable_ext0_wakeup(PIN_SENSOR, HIGH);
-  esp_sleep_enable_ext1_wakeup(1ULL << PIN_EXT_BTN, ESP_EXT1_WAKEUP_ALL_LOW);
   esp_deep_sleep_start();
 }
 
@@ -796,8 +797,7 @@ bool connectWiFi() {
 // ============================================================
 float readBatteryPercent() {
   int raw = analogRead(PIN_BATTERY_ADC);
-  float v_gpio = raw * (3.3 / 4095.0);
-  float voltage = v_gpio * ((BATTERY_R1 + BATTERY_R2) / BATTERY_R2);
+  float voltage = raw * (3.3 / 4095.0) * ((BATTERY_R1 + BATTERY_R2) / BATTERY_R2);
   float pct = ((voltage - BATTERY_MIN_V) / (BATTERY_MAX_V - BATTERY_MIN_V)) * 100.0;
   return constrain(pct, 0.0, 100.0);
 }
