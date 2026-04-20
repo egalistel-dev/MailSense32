@@ -4,7 +4,7 @@
  * ╩ ╩╩ ╩╩╩═╝╚═╝╚═╝╝╚╝╚═╝╚═╝╚═╝ ╚═╝
  * 
  * MailSense32 — Smart Mailbox Detector
- * Version : 1.0.2
+ * Version : 1.0.3
  * Author  : Fab / egamaker.be
  * License : MIT
  * GitHub  : https://github.com/egamaker/MailSense32
@@ -40,7 +40,7 @@
 // ============================================================
 // CONSTANTS
 // ============================================================
-#define FIRMWARE_VERSION      "1.0.2"
+#define FIRMWARE_VERSION      "1.0.3"
 #define WIFI_MAX_RETRIES      5
 #define WIFI_TIMEOUT_MS       10000
 #define LONG_PRESS_MS         3000
@@ -305,10 +305,14 @@ void loop() {
     lastSensorState = currentSensorState;
     Serial.printf("GPIO4 changed → %s\n", currentSensorState == HIGH ? "HIGH (magnet removed — mail!)" : "LOW (magnet present)");
     // Si HIGH + détection active + pas en cooldown → envoyer notification
-    if (currentSensorState == HIGH && !maintenanceMode && (millis() - lastTriggerLoop > 10000)) {
+    unsigned long cooldownMs = (unsigned long)cfg.cooldown_min * 60 * 1000;
+    if (currentSensorState == HIGH && !maintenanceMode && (millis() - lastTriggerLoop > cooldownMs)) {
       lastTriggerLoop = millis();
-      Serial.println("→ Trigger detected while awake — sending notification");
+      Serial.printf("→ Trigger detected while awake — sending notification (cooldown: %d min)\n", cfg.cooldown_min);
       sendNotification(false);
+    } else if (currentSensorState == HIGH && !maintenanceMode) {
+      unsigned long remaining = (cooldownMs - (millis() - lastTriggerLoop)) / 1000;
+      Serial.printf("→ Cooldown active — %lu sec remaining\n", remaining);
     }
   }
 
@@ -777,6 +781,10 @@ bool connectWiFi() {
 
   Serial.printf("Connecting to %s ", cfg.wifi_ssid);
   WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm); // Puissance MAX pour boîte aux lettres éloignée
+  WiFi.setSleep(false);                 // Désactive power save WiFi
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
   WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
 
   for (int i = 0; i < WIFI_MAX_RETRIES * 10; i++) {
@@ -928,7 +936,7 @@ void sendHAMQTT(bool isTest) {
 
   char payload[256];
   serializeJson(doc, payload);
-  mqttClient.publish(cfg.mqtt_topic, payload, true);
+  mqttClient.publish(cfg.mqtt_topic, payload, false); // false = pas de retain → HA déclenche à chaque fois
   Serial.println("MQTT published!");
   mqttClient.disconnect();
 }
