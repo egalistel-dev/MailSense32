@@ -305,7 +305,7 @@ Soumettez une **Pull Request** pour contribuer directement.
 Si vous souhaitez réaliser ce projet facilement, le PCB est disponible avec les composants déjà soudés (PCBA) via JLCPCB. Grâce aux connecteurs femelles, aucune soudure complexe n'est requise pour les modules principaux : il suffit de les clipser !
 
 * 🛒 **Commander ici :** [MailSense32 sur OSHWLab](https://oshwlab.com/egalistel/project_wqdolgch)
-* 🎁 **Soutenir le projet :** Si vous êtes un nouvel utilisateur, [inscrivez-vous ici](https://jlcpcb.com/fr/?from=ESYQKQRKXDIVAAPFHSAC) pour soutenir mon travail et recevoir des coupons de réduction !
+* 🎁 **Soutenir le projet :** Si vous êtes un nouvel utilisateur, [inscrivez-vous ici](https://jlcpcb.com/fr/?from=egalistel) pour soutenir mon travail et recevoir des coupons de réduction !
 
 <p align="center">
   <img src="captures/jlcpcb.jpg" alt="MailSense32 PCB fabriqué par JLCPCB" width="480"/>
@@ -498,7 +498,7 @@ Hold **BOOT button** (GPIO0) for **3 seconds** after power-on.
 If you want to build this project easily, the PCB is available with pre-assembled components (PCBA) via JLCPCB. Thanks to the female headers, no complex soldering is required for the main modules—just plug them in!
 
 * 🛒 **Order here:** [MailSense32 on OSHWLab](https://oshwlab.com/egalistel/project_wqdolgch)
-* 🎁 **Support the project:** If you are a new user, please [sign up here](https://jlcpcb.com/fr/?from=ESYQKQRKXDIVAAPFHSAC) to support my work and get discount coupons!
+* 🎁 **Support the project:** If you are a new user, please [sign up here](https://jlcpcb.com/fr/?from=egalistel) to support my work and get discount coupons!
 
 <p align="center">
   <img src="captures/jlcpcb.jpg" alt="MailSense32 PCB manufactured by JLCPCB" width="480"/>
